@@ -13,7 +13,8 @@ import VideoToolbox
 public class ApiVideoLiveStream {
     private let rtmpStream: RTMPStream
     private let rtmpConnection = RTMPConnection()
-
+    
+    private var pronamaEffect = PronamaEffect()
     private var streamKey: String = ""
     private var url: String = ""
 
@@ -257,6 +258,10 @@ public class ApiVideoLiveStream {
             initialCamera: initialCamera
         )
         preview.attachStream(self.rtmpStream)
+        self.rtmpStream.lockQueue.async {
+                self.rtmpStream.videoOrientation = AVCaptureVideoOrientation.landscapeRight
+                self.rtmpStream.videoSettings.videoSize = CGSize(width: 1280, height: 720)
+        }
     }
 
     deinit {
@@ -316,7 +321,7 @@ public class ApiVideoLiveStream {
 
     private func prepareVideo(videoConfig: VideoConfig) {
         self.rtmpStream.frameRate = videoConfig.fps
-        self.rtmpStream.sessionPreset = AVCaptureSession.Preset.high
+        self.rtmpStream.sessionPreset = AVCaptureSession.Preset.hd1280x720
 
         let resolution = videoConfig.resolution
         let width = self.rtmpStream.videoOrientation
@@ -395,6 +400,18 @@ public class ApiVideoLiveStream {
         self.rtmpStream.attachCamera(nil, channel: 0)
         self.rtmpStream.attachAudio(nil)
     }
+    
+    public func addOverlay(data: Data){
+            guard lastCamera != nil else {
+                print("No camera has been set")
+                return
+            }
+            _=self.rtmpStream.unregisterVideoEffect(pronamaEffect)
+            let visualEffect = PronamaEffect()
+            visualEffect.uiImage = UIImage(data: data)!
+            pronamaEffect = visualEffect
+            _=self.rtmpStream.registerVideoEffect(visualEffect)
+        }
 
     @objc
     private func rtmpStatusHandler(_ notification: Notification) {
@@ -494,4 +511,36 @@ extension AVCaptureVideoOrientation {
 public enum LiveStreamError: Error {
     case IllegalArgumentError(String)
     case IllegalOperationError(String)
+}
+
+final class PronamaEffect: VideoEffect {
+    let filter: CIFilter? = CIFilter(name: "CISourceOverCompositing")
+    var uiImage: UIImage = UIImage(named: "png_fire_6076.png")!
+    var extent = CGRect.zero {
+        didSet {
+            if extent == oldValue {
+                return
+            }
+            UIGraphicsBeginImageContext(extent.size)
+            let image = uiImage
+            image.draw(at: CGPoint(x: 0, y: 0))
+            pronama = CIImage(image: UIGraphicsGetImageFromCurrentImageContext()!, options: nil)
+            UIGraphicsEndImageContext()
+        }
+    }
+    var pronama: CIImage?
+
+    override init() {
+        super.init()
+    }
+
+    override func execute(_ image: CIImage, info: CMSampleBuffer?) -> CIImage {
+        guard let filter: CIFilter = filter else {
+            return image
+        }
+        extent = image.extent
+        filter.setValue(pronama!, forKey: "inputImage")
+        filter.setValue(image, forKey: "inputBackgroundImage")
+        return filter.outputImage!
+    }
 }
